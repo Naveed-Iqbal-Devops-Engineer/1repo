@@ -1,5 +1,5 @@
 # =========================
-# Stage 1: Build dependencies
+# Stage 1.0: Build dependencies
 # =========================
 FROM python:3.10-slim AS builder
 

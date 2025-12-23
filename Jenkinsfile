@@ -1,68 +1,73 @@
 pipeline {
     agent any
 
+    // webhook trigger block yahan hona chahiye
+    triggers {
+        githubPush()
+    }
+
+    environment {
+        IMAGE_NAME = 'thedevopsengineer/jenkins53'
+        DOCKER_CREDENTIALS_ID = 'dockerhub'
+    }
+
     stages {
-        stage('Clone Repository') {
+        stage('Clone Repo') {
             steps {
                 git branch: 'main', url: 'https://github.com/Naveed-Iqbal-Devops-Engineer/1repo.git'
             }
         }
 
-        stage('Setup Virtual Environment') {
+        stage('Build Docker Image') {
             steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install --upgrade pip
-                '''
+                script {
+                    env.IMAGE_TAG = "${IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    sh "docker build -t ${env.IMAGE_TAG} ."
+                }
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Login to Docker Hub') {
             steps {
-                sh '''
-                    . venv/bin/activate
-                    pip install -r requirements.txt
-                '''
+                withCredentials([usernamePassword(
+                    credentialsId: "${DOCKER_CREDENTIALS_ID}",
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                }
             }
         }
 
-        stage('Run Migrations') {
+        stage('Push Image to Docker Hub') {
             steps {
-                sh '''
-                    . venv/bin/activate
-                    python manage.py makemigrations
-                    python manage.py migrate
-                '''
+                sh "docker push ${env.IMAGE_TAG}"
             }
         }
 
-        stage('Collect Static Files') {
+        stage('Deploy Dev and Staging') {
             steps {
-                sh '''
-                    . venv/bin/activate
-                    python manage.py collectstatic --noinput
-                '''
-            }
-        }
-
-        stage('Run Django App with Gunicorn') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    gunicorn notesapp.wsgi:application --bind 0.0.0.0:8000 --workers 3
-                '''
+                script {
+                    def containers = ['dev': 8001, 'staging': 8002]
+                    containers.each { envName, port ->
+                        def containerName = "django-notes-${envName}"
+                        sh """
+                            docker rm -f ${containerName} || true
+                            docker run -d --name ${containerName} \\
+                            -p ${port}:8000 ${env.IMAGE_TAG}
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
         success {
-            echo '✅ Deployment successful. Django app running on port 8000 (using Gunicorn).'
+            echo "✅ Dev on 8001 | Staging on 8002"
         }
         failure {
-            echo '❌ Deployment failed. Check logs.'
+            echo "❌ Deployment failed"
         }
     }
 }
-
